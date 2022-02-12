@@ -1,0 +1,107 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<title>NFC Tag emulator</title>
+
+<style>
+.output {
+    background-color: #f0f0f0;
+    border-radius: 0.75em;
+    display: block;
+    margin: 0.5em;
+    padding: 0.5em;
+}
+</style>
+
+<script>
+  let tagUID = [0,0,0,0];
+  let ndef = null;
+  let device = null;
+  let char = null;
+  let connected = false;
+
+  function log(...args) {
+    console.log(...args);
+    document.getElementById("output").innerHTML += `${args.join(" ")}<br>`;
+  }
+
+  function uidToString(uid) {
+    return uid.map(b => b.toString(16).padStart(2, "0")).join(":");
+  }
+
+  function renderTagUID() {
+    document.getElementById("tagUid").innerHTML = uidToString(tagUID);
+  }
+
+  async function connectEmulator() {
+    if (connected) {
+      log('Disconnecting emulator');
+      await device.gatt.disconnect();
+      device = null;
+      char = null;
+      document.getElementById("connect").innerHTML = "Connect emulator";
+      connected = false;
+      return;
+    }
+
+    try {
+      if (!device) {
+        log('Requesting Bluetooth Device...');
+        device = await navigator.bluetooth.requestDevice({
+            filters: [{services: [0x9000]}]});
+      }
+
+      log('Connecting to GATT Server...');
+      const server = await device.gatt.connect();
+
+      log('Getting Service...');
+      const service = await server.getPrimaryService(0x9000);
+
+      log('Getting Characteristics...');
+      char = await service.getCharacteristic(0x9001);
+
+      log("Reading current emulated uid");
+      const charValue = await char.readValue();
+      tagUID = Array.from(new Uint8Array(charValue.buffer));
+      renderTagUID();
+
+      log("> Requesting NDEFReader");
+      ndef = new NDEFReader();
+      await ndef.scan();
+      log("> NDEFReader");
+
+      ndef.addEventListener("readingerror", () => {
+        log("Argh! Cannot read data from the NFC tag. Try another one?");
+      });
+
+      ndef.addEventListener("reading", async ({ message, serialNumber }) => {
+        log(`> Serial Number: ${serialNumber}` );
+        tagUID = serialNumber.split(":").map(b => parseInt(b, 16));
+        renderTagUID();
+        log("Cloning tag uid: ", uidToString(tagUID));
+        const value = new Uint8Array(tagUID);
+        await char.writeValue(value);
+        log("Clonned");
+      });
+
+      document.getElementById("connect").innerHTML = "Disconnect emulator";
+      connected = true;
+    } catch (error) {
+      log('Argh! ' + error);
+      device.gatt.disconnect();
+      device = null;
+      char = null;
+      connected = false;
+    }
+  }
+
+</script>
+
+<h1>NFC Tag emulator</h1>
+<div>
+  <div>Tag id: <span id="tagUid"></span></div>
+  <br>
+  <button id="connect" onclick="connectEmulator()">Connect emulator</button>
+  <br>
+  <div class="output" id="output"></div
+</div>
